@@ -280,7 +280,8 @@ async function loadDetail(id) {
   card.classList.add('fade-in')
 
   // show correlates loading
-  document.getElementById('correlatesList').innerHTML = ''
+  document.getElementById('correlatesDiagnostic').innerHTML = ''
+  document.getElementById('correlatesSame').innerHTML = ''
   document.getElementById('correlatesLoading').classList.remove('hidden')
 
   const [ctx] = await Promise.all([
