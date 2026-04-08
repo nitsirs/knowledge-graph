@@ -125,9 +125,10 @@
             <div class="flex items-center gap-2 mb-1">
               <p class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Useful for probing</p>
               <span class="text-xs px-2 py-0.5 bg-blue-50 text-blue-600 rounded-full font-medium">|r| 0.15 – 0.65</span>
+              <span id="countDiagnostic" class="text-xs text-slate-400 ml-auto"></span>
             </div>
             <p class="text-xs text-slate-400 mb-3">Different constructs with meaningful empirical links — if one is low, these are worth exploring</p>
-            <div id="correlatesDiagnostic" class="space-y-2"></div>
+            <div id="correlatesDiagnostic" class="space-y-2 max-h-96 overflow-y-auto pr-1"></div>
           </div>
 
           <!-- Same-construct correlates -->
@@ -135,9 +136,10 @@
             <div class="flex items-center gap-2 mb-1">
               <p class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Same construct / sub-facets</p>
               <span class="text-xs px-2 py-0.5 bg-slate-100 text-slate-500 rounded-full font-medium">|r| > 0.65</span>
+              <span id="countSame" class="text-xs text-slate-400 ml-auto"></span>
             </div>
             <p class="text-xs text-slate-400 mb-3">Highly correlated — likely measuring the same underlying concept, not useful for branching</p>
-            <div id="correlatesSame" class="space-y-2"></div>
+            <div id="correlatesSame" class="space-y-2 max-h-64 overflow-y-auto pr-1"></div>
           </div>
 
           <div id="correlatesLoading" class="space-y-3">
@@ -307,7 +309,7 @@ async function loadDetail(id) {
   }`
 
   // fetch full correlates list
-  const corrRes  = await fetch(`${API}/correlates?id=${id}&limit=15&min_k=3`)
+  const corrRes  = await fetch(`${API}/correlates?id=${id}&limit=500&min_k=3`)
   const corrData = await corrRes.json()
   const corrs    = corrData.correlates || []
 
@@ -316,6 +318,9 @@ async function loadDetail(id) {
   // Split into diagnostic (different concept) vs same-construct (near-duplicate)
   const diagnostic = corrs.filter(c => c.abs_r <= 0.65 && c.abs_r >= 0.15)
   const same       = corrs.filter(c => c.abs_r >  0.65)
+
+  document.getElementById('countDiagnostic').textContent = diagnostic.length > 0 ? `${diagnostic.length} constructs` : ''
+  document.getElementById('countSame').textContent       = same.length > 0 ? `${same.length} constructs` : ''
 
   document.getElementById('correlatesDiagnostic').innerHTML = diagnostic.length === 0
     ? '<p class="text-xs text-slate-400 py-2">No moderate correlates found (min 3 studies)</p>'
