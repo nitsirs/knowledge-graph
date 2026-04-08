@@ -118,9 +118,28 @@
         </div>
 
         <!-- Top correlates -->
-        <div class="p-6">
-          <p class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-4">Top correlated constructs</p>
-          <div id="correlatesList" class="space-y-3"></div>
+        <div class="p-6 space-y-6">
+
+          <!-- Diagnostic correlates -->
+          <div>
+            <div class="flex items-center gap-2 mb-1">
+              <p class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Useful for probing</p>
+              <span class="text-xs px-2 py-0.5 bg-blue-50 text-blue-600 rounded-full font-medium">|r| 0.15 – 0.65</span>
+            </div>
+            <p class="text-xs text-slate-400 mb-3">Different constructs with meaningful empirical links — if one is low, these are worth exploring</p>
+            <div id="correlatesDiagnostic" class="space-y-2"></div>
+          </div>
+
+          <!-- Same-construct correlates -->
+          <div>
+            <div class="flex items-center gap-2 mb-1">
+              <p class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Same construct / sub-facets</p>
+              <span class="text-xs px-2 py-0.5 bg-slate-100 text-slate-500 rounded-full font-medium">|r| > 0.65</span>
+            </div>
+            <p class="text-xs text-slate-400 mb-3">Highly correlated — likely measuring the same underlying concept, not useful for branching</p>
+            <div id="correlatesSame" class="space-y-2"></div>
+          </div>
+
           <div id="correlatesLoading" class="space-y-3">
             <div class="h-12 bg-slate-100 rounded-xl animate-pulse"></div>
             <div class="h-12 bg-slate-100 rounded-xl animate-pulse"></div>
@@ -179,7 +198,8 @@ async function doSearch(q) {
     const res  = await fetch(`${API}/search`, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ keyword: q, limit: 20 }),
+      // Higher threshold (0.55) — only return genuinely similar results
+      body:    JSON.stringify({ keyword: q, limit: 20, threshold: 0.55 }),
     })
     const data = await res.json()
     renderResults(data.results || [], data.match_type)
@@ -201,15 +221,52 @@ function renderResults(results, matchType) {
     matchType === 'semantic' ? 'bg-purple-50 text-purple-600' : 'bg-green-50 text-green-600'
   }`
 
-  list.innerHTML = results.map(r => `
+  if (results.length === 0) {
+    list.innerHTML = `
+      <div class="px-3 py-6 text-center">
+        <p class="text-sm text-slate-500 font-medium">No close matches found</p>
+        <p class="text-xs text-slate-400 mt-1">Try a more specific term or phrase<br>e.g. "emotional exhaustion" instead of "tired"</p>
+      </div>`
+    return
+  }
+
+  // For semantic results, warn if top match confidence is low
+  const topSimilarity = results[0].similarity ?? 1
+  const lowConfidence = matchType === 'semantic' && topSimilarity < 0.65
+
+  list.innerHTML = (lowConfidence ? `
+    <div class="px-3 py-2 mb-1 bg-amber-50 border border-amber-100 rounded-xl">
+      <p class="text-xs text-amber-700 font-medium">Low confidence match</p>
+      <p class="text-xs text-amber-600 mt-0.5">These are the closest constructs but may not match your intent. Try a more specific phrase.</p>
+    </div>` : '') +
+  results.map(r => `
     <button onclick="loadDetail(${r.id})"
       class="result-card w-full text-left px-3 py-2.5 rounded-xl border border-transparent hover:border-blue-200 hover:bg-blue-50 transition group ${r.id === activeId ? 'border-blue-200 bg-blue-50' : ''}">
-      <p class="text-sm font-medium text-slate-700 group-hover:text-blue-700 truncate">${r.name}</p>
+      <div class="flex items-center justify-between gap-2">
+        <p class="text-sm font-medium text-slate-700 group-hover:text-blue-700 truncate">${r.name}</p>
+        ${r.similarity != null ? `<span class="text-xs flex-shrink-0 font-mono ${r.similarity >= 0.7 ? 'text-emerald-500' : r.similarity >= 0.6 ? 'text-amber-500' : 'text-slate-400'}">${(r.similarity * 100).toFixed(0)}%</span>` : ''}
+      </div>
       <p class="text-xs text-slate-400 truncate mt-0.5">${shortPath(r.path)}</p>
     </button>
   `).join('')
 
-  if (results.length > 0 && activeId !== results[0].id) loadDetail(results[0].id)
+  // Don't auto-load for semantic searches — let the user pick
+  if (matchType === 'sql' && results.length > 0 && activeId !== results[0].id) {
+    loadDetail(results[0].id)
+  } else if (matchType === 'semantic') {
+    // Show a prompt to click a result instead
+    document.getElementById('emptyState').classList.remove('hidden')
+    document.getElementById('detailCard').classList.add('hidden')
+    document.getElementById('emptyState').innerHTML = `
+      <div class="w-16 h-16 bg-purple-50 rounded-2xl flex items-center justify-center mb-4">
+        <svg class="w-8 h-8 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5"/>
+        </svg>
+      </div>
+      <p class="text-slate-500 font-medium">Click a result to explore it</p>
+      <p class="text-slate-400 text-sm mt-1">Showing ${results.length} semantically similar constructs</p>
+    `
+  }
 }
 
 // ── detail ────────────────────────────────────────────────────────────────────
@@ -254,27 +311,37 @@ async function loadDetail(id) {
   const corrs    = corrData.correlates || []
 
   document.getElementById('correlatesLoading').classList.add('hidden')
-  document.getElementById('correlatesList').innerHTML = corrs.length === 0
-    ? '<p class="text-sm text-slate-400 text-center py-4">No correlates found with ≥3 studies</p>'
-    : corrs.map(c => correlateRow(c)).join('')
+
+  // Split into diagnostic (different concept) vs same-construct (near-duplicate)
+  const diagnostic = corrs.filter(c => c.abs_r <= 0.65 && c.abs_r >= 0.15)
+  const same       = corrs.filter(c => c.abs_r >  0.65)
+
+  document.getElementById('correlatesDiagnostic').innerHTML = diagnostic.length === 0
+    ? '<p class="text-xs text-slate-400 py-2">No moderate correlates found (min 3 studies)</p>'
+    : diagnostic.map(c => correlateRow(c, false)).join('')
+
+  document.getElementById('correlatesSame').innerHTML = same.length === 0
+    ? '<p class="text-xs text-slate-400 py-2">None</p>'
+    : same.map(c => correlateRow(c, true)).join('')
 }
 
-function correlateRow(c) {
-  const pct       = Math.round(c.abs_r * 100)
-  const isPos     = c.direction === 'positive'
-  const barColor  = isPos ? 'bg-blue-400' : 'bg-rose-400'
-  const dirIcon   = isPos
-    ? '<svg class="w-3 h-3 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 10l7-7m0 0l7 7m-7-7v18"/></svg>'
-    : '<svg class="w-3 h-3 text-rose-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 14l-7 7m0 0l-7-7m7 7V3"/></svg>'
+function correlateRow(c, muted = false) {
+  const pct      = Math.round(c.abs_r * 100)
+  const isPos    = c.direction === 'positive'
+  const barColor = muted ? 'bg-slate-300' : (isPos ? 'bg-blue-400' : 'bg-rose-400')
+  const nameColor = muted ? 'text-slate-400' : 'text-slate-700 group-hover:text-blue-700'
+  const dirIcon  = isPos
+    ? `<svg class="w-3 h-3 ${muted ? 'text-slate-300' : 'text-blue-400'}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 10l7-7m0 0l7 7m-7-7v18"/></svg>`
+    : `<svg class="w-3 h-3 ${muted ? 'text-slate-300' : 'text-rose-400'}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 14l-7 7m0 0l-7-7m7 7V3"/></svg>`
 
   return `
     <button onclick="loadDetail(${c.id})"
       class="w-full text-left p-3 rounded-xl hover:bg-slate-50 transition group">
       <div class="flex items-center justify-between mb-1.5">
-        <span class="text-sm font-medium text-slate-700 group-hover:text-blue-700 truncate pr-2">${c.name}</span>
+        <span class="text-sm font-medium ${nameColor} truncate pr-2">${c.name}</span>
         <div class="flex items-center gap-1.5 flex-shrink-0">
           ${dirIcon}
-          <span class="text-sm font-bold text-slate-600">${c.abs_r.toFixed(3)}</span>
+          <span class="text-sm font-bold ${muted ? 'text-slate-400' : 'text-slate-600'}">${c.abs_r.toFixed(3)}</span>
           <span class="text-xs text-slate-400">k=${c.k_effects}</span>
         </div>
       </div>
